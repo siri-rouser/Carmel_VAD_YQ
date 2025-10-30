@@ -1,0 +1,4 @@
+# Ignore the three folders
+carmel_data/
+json_cache/
+OTA/
