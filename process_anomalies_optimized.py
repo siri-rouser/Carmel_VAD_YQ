@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import re
+from typing import Dict, List, Tuple
+import csv
+import tarfile
+import numpy as np
+import cv2
+
+# ---------- Config derived from dataset spec ----------
+FRAMES_PER_SHARD = 10_000      # frames-0000xx.tar has 10,000 frames
+STEP_MS = 100                  # 10 fps => one frame every 100 ms
+SHARD_DURATION_MS = FRAMES_PER_SHARD * STEP_MS  # 1,000,000 ms per shard
+
+FNAME_RE = re.compile(r"^frame_(\d{10,})_(\d+)\.jpg$")
+
+SEVERITY_BUCKETS = {
+    "0": [0, 1],
+    "1": [3, 4, 6, 8, 15, 17, 27],
+    "2": [2, 5, 7, 10, 12, 16, 24, 26, 30, 31],
+    "3": [9, 11, 14, 18, 20, 21, 28, 29],
+    "4": [13, 19, 22, 23, 25, 32],
+}
+
+def build_label_to_severity() -> Dict[int, int]:
+    label_to_sev = {}
+    for sev_str, labels in SEVERITY_BUCKETS.items():
+        sev = int(sev_str)
+        for lab in labels:
+            label_to_sev[int(lab)] = sev
+    return label_to_sev
+
+LABEL_TO_SEVERITY = build_label_to_severity()
+
+def parse_fname(name: str):
+    m = FNAME_RE.match(name)
+    if not m:
+        return None
+    ts = int(m.group(1))
+    fid = int(m.group(2))
+    return ts, fid
+
+def estimate_fps(timestamps: List[int], max_fps: int = 60) -> float:
+    if len(timestamps) < 2:
+        return 15.0
+    diffs = np.diff(sorted(timestamps))
+    diffs = diffs[diffs > 0]
+    if diffs.size == 0:
+        return 15.0
+    med_dt_ms = float(np.median(diffs))
+    fps = 1000.0 / med_dt_ms
+    fps = float(np.clip(fps, 1.0, float(max_fps)))
+    return fps
+
+def sorted_shards(frames_dir: Path) -> List[Path]:
+    shards = sorted(frames_dir.glob("frames-*.tar"))
+    if not shards:
+        raise FileNotFoundError(f"No .tar shards found in {frames_dir}")
+    return shards
+
+def first_timestamp_of_shards(shard_paths: List[Path]) -> int:
+    """Read only the first JPG member and return its timestamp (epoch ms)."""
+    first_timestamps = {}
+    for tar_path in shard_paths:
+        ts_min = float('inf')
+        ts_max = float('-inf')
+        with tarfile.open(tar_path, "r") as tf:
+            for m in tf:
+                if not m.isfile():
+                    continue
+            name = Path(m.name).name
+            parsed = parse_fname(name)
+            if parsed is None:
+                continue
+            ts1, _ = parsed
+            ts_min = min(ts_min, ts1)
+            ts_max = max(ts_max, ts1)
+
+        first_timestamps[int(tar_path.parts[-1].split('.')[0].split('frames-')[1])] = (ts_min, ts_max) # the key is the shard index, e.g., frames-000001.tar -> 1
+
+    first_timestamps = dict(sorted(first_timestamps.items()))
+    return first_timestamps
+
+def pick_shards_for_range(shards: List[Path], first_timestamps, start_ts: int, end_ts: int) -> List[Tuple[int, Path]]:
+    """Return list of (index, shard_path) that can contain frames intersecting [start_ts, end_ts]."""
+    # Compute inclusive index range by arithmetic, then clamp to available list
+    end_idx = -1
+    start_idx = -1
+    for shard_idx, (min_time, max_time) in first_timestamps.items():
+        if start_ts <= max_time:
+            start_idx = shard_idx
+        break
+    for shard_idx, (min_time, max_time) in first_timestamps.items():
+        if end_ts <= max_time:
+            end_idx = shard_idx
+        break
+    
+    if end_idx != -1 and start_idx != -1:
+        if end_idx < start_idx:
+            print("  [WARN] No shards found for the given timestamp range.")
+        return [(i, shards[i]) for i in range(start_idx, end_idx+1)]
+
+def list_members_in_range_from_selected_shards(selected: List[Tuple[int, Path]], start_ts: int, end_ts: int) -> Tuple[Dict[Path, List[Tuple[int,int,str]]], List[int]]:
+    """Open only selected shards and list members that fall in [start_ts, end_ts]."""
+    members_index: Dict[Path, List[Tuple[int,int,str]]] = {}
+    all_ts: List[int] = []
+    for idx, tar_p in selected:
+        with tarfile.open(tar_p, "r") as tf:
+            for m in tf:
+                if not m.isfile():
+                    continue
+                name = Path(m.name).name
+                parsed = parse_fname(name)
+                if parsed is None:
+                    continue
+                ts, fid = parsed
+                if start_ts <= ts <= end_ts:
+                    members_index.setdefault(tar_p, []).append((ts, fid, m.name))
+                    all_ts.append(ts)
+    return members_index, all_ts
+
+def write_clip_from_members(shard_paths: List[Path],
+                            members_index: Dict[Path, List[Tuple[int,int,str]]],
+                            out_path: Path,
+                            fps: float) -> int:
+    """Stream frames from tar members to a VideoWriter. Returns number of frames written."""
+    # First pass: open first image to get size
+    first_img = None
+    for tar_p in shard_paths:
+        entries = members_index.get(tar_p, [])
+        if not entries:
+            continue
+        entries_sorted = sorted(entries, key=lambda x: (x[0], x[1]))
+        with tarfile.open(tar_p, "r") as tf:
+            m = tf.getmember(entries_sorted[0][2])
+            f = tf.extractfile(m)
+            if f is None:
+                continue
+            data = f.read()
+            img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                first_img = img
+                break
+    if first_img is None:
+        return 0
+    h, w = first_img.shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    vw = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
+    if not vw.isOpened():
+        raise RuntimeError(f"Failed to open VideoWriter at {out_path}")
+
+    global_entries = []
+    for tar_p, entries in members_index.items():
+        for ts, fid, name in entries:
+            global_entries.append((ts, fid, tar_p, name))
+    global_entries.sort(key=lambda x: (x[0], x[1]))
+
+    frames_written = 0
+    for ts, fid, tar_p, name in global_entries:
+        with tarfile.open(tar_p, "r") as tf:
+            try:
+                m = tf.getmember(name)
+            except KeyError:
+                continue
+            f = tf.extractfile(m)
+            if f is None:
+                continue
+            data = f.read()
+            img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                continue
+            if (img.shape[1], img.shape[0]) != (w, h):
+                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+            vw.write(img)
+            frames_written += 1
+
+    vw.release()
+    return frames_written
+
+def read_labels_csv(labels_csv: Path):
+    rows = []
+    with open(labels_csv, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        header_map = {k: k for k in reader.fieldnames or []}
+        def pick(*cands):
+            for c in cands:
+                if c in header_map:
+                    return c
+            return None
+        col_obj = pick("object__id", "object_id")
+        col_st  = pick("start__timestamp", "start_timestamp")
+        col_et  = pick("end__timestamp", "end_timestamp")
+        col_lab = pick("label",)
+        required = [col_st, col_et, col_lab]
+        if any(c is None for c in required):
+            raise ValueError(f"CSV must contain start/end timestamps and label. Got headers: {reader.fieldnames}")
+        for r in reader:
+            try:
+                start_ts = int(r[col_st])
+                end_ts = int(r[col_et])
+                label   = int(r[col_lab])
+            except Exception as e:
+                print(f"[WARN] Skipping row due to parse error: {r} ({e})")
+                continue
+            if end_ts < start_ts:
+                start_ts, end_ts = end_ts, start_ts
+            obj_id = r.get(col_obj, "")
+            rows.append((start_ts, end_ts, label, obj_id))
+    return rows
+
+def process_folder(folder_path):
+    folder_path = Path(folder_path)
+    intersection_name = folder_path.parts[-2]
+    labels_csv = Path(folder_path) / "anomaly-labels.csv"
+    frames_dir = Path(folder_path) / "frames_shards"
+    outdir = Path(folder_path) / "videos"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    shards = sorted_shards(frames_dir)
+
+    # Get base timestamp from first shard's first frame (minimal I/O)
+    timestamp_dict = first_timestamp_of_shards(shards)
+
+    rows = read_labels_csv(labels_csv)
+
+    for idx, (start_ts, end_ts, label, obj_id) in enumerate(rows, 1):
+        severity = LABEL_TO_SEVERITY.get(label, -1)
+        out_path = outdir / f"{intersection_name}_av_{idx}_{label}_{severity}.mp4"
+        print(f"[{idx}/{len(rows)}] Event label={label}, severity={severity}, ts=[{start_ts},{end_ts}] -> {out_path.name}")
+
+        # Select only shards that can possibly contain this interval
+        selected = pick_shards_for_range(shards, timestamp_dict, start_ts, end_ts)
+        if not selected:
+            print("  [WARN] No shard candidates for this event. Skipping.")
+            continue
+
+        # From those shards, list members in range
+        members_index, all_ts = list_members_in_range_from_selected_shards(selected, start_ts, end_ts)
+        if not all_ts:
+            print("  [WARN] No frames found in range for this event. Skipping.")
+            continue
+
+        fps = estimate_fps(all_ts, max_fps=30)
+        print(f"  Shards: {len(selected)} | Frames: {sum(len(v) for v in members_index.values())} | Estimated FPS: {fps:.2f}")
+
+        written = write_clip_from_members([p for _, p in selected], members_index, out_path, fps=fps)
+        if written == 0:
+            print("  [WARN] Wrote 0 frames for event (unexpected).")
+        else:
+            print(f"  [OK] Wrote {written} frames -> {out_path}")
+
+if __name__ == "__main__":
+    folders = ["./OTA/MononElmStreetNB/testdata", "./OTA/RangelinS116thSt/testdata","./OTA/RangelineSmedicalDr/testdata"]
+    for folder in folders:
+        if os.path.exists(folder):
+            process_folder(folder)
+        else:
+            print(f"Folder {folder} does not exist.")
