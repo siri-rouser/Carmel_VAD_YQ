@@ -237,6 +237,10 @@ def process_folder(folder_path):
     rows = read_labels_csv(labels_csv)
 
     for idx, (start_ts, end_ts, label, obj_id) in enumerate(rows, 1):
+        if idx < 163:
+            continue
+        if (end_ts - start_ts) > 10000:
+            continue
         start_ts = max(start_ts-1000, global_min_ts) # Add 10 frames margin for event
         end_ts = min(end_ts+1000, global_max_ts) # Add 10 frames margin for event
         severity = LABEL_TO_SEVERITY.get(label, -1)
@@ -263,7 +267,7 @@ def process_folder(folder_path):
             print(f"  [OK] Wrote {written} frames -> {out_path}")
 
 if __name__ == "__main__":
-    folders = ["./OTA/MononElmStreetNB/testdata", "./OTA/RangelineS116thSt/testdata","./OTA/RangelineSMedicalDr/testdata"]
+    folders = ["./OTA/MononElmStreetNB/testdata"]
     for folder in folders:
         if os.path.exists(folder):
             process_folder(folder)

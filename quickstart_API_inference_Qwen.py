@@ -1,3 +1,8 @@
+from http import HTTPStatus
+import dashscope
+from openai import OpenAI
+import os
+from dashscope import Generation
 import os, io, cv2, json, time, base64, re
 from datetime import datetime
 import numpy as np
@@ -5,7 +10,8 @@ from PIL import Image
 from openai import OpenAI
 from openai import RateLimitError, APIStatusError, InternalServerError
 
-# ---- helpers ----
+from quickstart_API_inference_GPT import call_openai_for_video
+
 def parse_json_from_text(text: str) -> dict:
     """Best-effort: direct JSON -> fallback to first {...} block."""
     # 1) direct parse
@@ -19,59 +25,36 @@ def parse_json_from_text(text: str) -> dict:
         raise ValueError("No JSON object found in response text.")
     return json.loads(m.group(0))
 
-
-def resize_keep_aspect(pil, max_side=512):
-    w, h = pil.size
-    s = max(w, h)
-    if s <= max_side:
-        return pil
-    scale = max_side / s
-    return pil.resize((int(w*scale), int(h*scale)), Image.BILINEAR)
-
-def sample_frames_as_base64(video_path, max_frames=12, max_side=512, jpeg_q=80):
-    cap = cv2.VideoCapture(video_path)
-    frames = []
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frames.append(frame[:, :, ::-1])  # BGR->RGB
-    cap.release()
-    if not frames:
-        raise RuntimeError("No frames read from video.")
-
-    idxs = np.linspace(0, len(frames)-1, min(max_frames, len(frames)), dtype=int)
-    b64_list = []
-    for i in idxs:
-        pil = Image.fromarray(frames[i])
-        pil = resize_keep_aspect(pil, max_side=max_side)
-        buf = io.BytesIO()
-        pil.save(buf, format="JPEG", quality=jpeg_q, optimize=True)
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        b64_list.append(f"data:image/jpeg;base64,{b64}")
-    return b64_list
-
-def build_messages(prompt, b64_images, instruction_text):
+def build_messages(prompt, video_path, instruction_text):
     dev = {
-        "role": "developer",
+        "role": "system",
         "content": instruction_text.strip()
     }
-    user_content = [{"type": "input_text", "text": prompt}]
-    # Responses API: image_url must be a STRING; no extra fields like "detail"
-    for data_url in b64_images:
-        user_content.append({"type": "input_image", "image_url": data_url})
-    user = {"role": "user", "content": user_content}
+
+    user = {
+            "role": "user",
+            "content": [
+                {
+                "type": "video",
+                "video": video_path  # This can be a local path or URL depending on context
+                },
+                {
+                "type": "text",
+                "text": prompt
+                }
+            ]
+            }
     return [dev, user]
 
 def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60):
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key=os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
-        raise ValueError("Set OPENAI_API_KEY")
+        raise ValueError("Set DASHSCOPE_API_KEY")
 
     # Set a client timeout so calls can't hang forever
-    client = OpenAI(api_key=api_key, timeout=timeout_s)
-
-    images = sample_frames_as_base64(video_path, max_frames=16, max_side=384, jpeg_q=80)
+    client = OpenAI(api_key=api_key, 
+                    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    timeout=timeout_s)
 
     instruction = """
         # Role: You are a vision annotator that writes neutral, factual, chronological descriptions of traffic anomalies.
@@ -145,7 +128,7 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
         # Output Format
             Return a single JSON object that follows this schema:
             {
-            "anomaly_relevance": "<critical or moderate or low>",
+            "anomaly_relevance": "<0-4, higher means more critical anomaly>",
             "anomaly_type_code": <integer from the catalog>,
             "anomaly_type_label": "<label from the catalog>",
             "event_description": "<chronological description. fewer than 100 words total with analysis>",
@@ -154,7 +137,7 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
 
         # Examples
             {
-            "anomaly_relevance": "moderate",
+            "anomaly_relevance": "4",
             "anomaly_type_code": 23,
             "anomaly_type_label": "wrong way driver",
             "event_description": "On a busy roundabout, a white SUV exits through the entry lane and proceeds against traffic.",
@@ -162,7 +145,7 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
             }
 
             {
-            "anomaly_relevance": "moderate",
+            "anomaly_relevance": "3",
             "anomaly_type_code": 18,
             "anomaly_type_label": "cut another traffic agent off clearly",
             "event_description": "On a snowy roundabout, a silver sedan enters without yielding and crosses ahead of a blue hatchback. The hatchback brakes hard to avoid a collision.",
@@ -170,7 +153,7 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
             }
 
             {
-            "anomaly_relevance": "moderate",
+            "anomaly_relevance": "3",
             "anomaly_type_code": 9,
             "anomaly_type_label": "stopping at an unusual point",
             "event_description": "At a four-way intersection, a red SUV stops within the entry lane while adjacent lanes continue moving.",
@@ -178,15 +161,15 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
             }
 
             {
-            "anomaly_relevance": "low",
+            "anomaly_relevance": "2",
             "anomaly_type_code": 24,
             "anomaly_type_label": "more than one full turn in a roundabout",
-            "event_description": "At a sunny single-lane roundabout, a white sedan circles once, continues for half a lap, then exits.",
+            "event_description": "At a sunny roundabout, a white sedan circles once, continues for half a lap, then exits.",
             "event_analysis": "Extra circling can confuse following drivers; no conflicts are observed."
             }
 
             {
-            "anomaly_relevance": "critical",
+            "anomaly_relevance": "4",
             "anomaly_type_code": 32,
             "anomaly_type_label": "risky behaviour that does not fit to another category",
             "event_description": "During night at an urban multiway intersection, a white sedan enters at visibly high speed, continues straight, and collides with another vehicle that is crossing the junction. Debris is visible and both vehicles come to a stop within the intersection.",
@@ -194,15 +177,15 @@ def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60
             }
     """
 
-    messages = build_messages(prompt, images, instruction)
+    messages = build_messages(prompt,video_path, instruction)
+
 
     # stream so you see partial tokens immediately
-    result = client.responses.create(
+    completion = client.chat.completions.create(
         model=model,
-        input=messages,
-        text={ "verbosity": "low" },
+        messages=messages,
     ) 
-    return result.output_text
+    return completion.choices[0].message.content
 
 
 def save_output_to_json(prompt, video_path, response, model_used, output_file):
@@ -221,22 +204,17 @@ def save_output_to_json(prompt, video_path, response, model_used, output_file):
         json.dump(data, f, indent=2, ensure_ascii=False)
     print(f"\nOutput saved to: {output_file}")
 
+
+
 if __name__ == "__main__":
     prompt = """
-    Please review the video and answer the three items below in English.
-
-        1. Identify the anomaly in the video
-
-        2. Provide a detailed description of the anomaly from start to end
-
-        3. Provide a brief analysis that explains your basis for judging the behavior as an anomaly
-    """
-    video_path = "./carmel_data/MedicalDrive-Rangeline/WrongTurnIntoTraffic_downsize.mp4"
-
-    # Pick a model you’re entitled to; try this first:
-    # model = "gpt-4.1-mini"
-    # If you have access, you can use:
-    model = "gpt-5-2025-08-07"
+        Please review the video and answer the three items below, and reply in english.
+        1. Does an anomaly exist. If yes, answer the following questions, Otherwise, reply "No anomaly detected".
+        2. Provide a detailed description of the anomaly from start to end.
+        3. Provide a brief analysis that explains your basis for judging the behavior as an anomaly.
+"""
+    video_path = "./carmel_data/MedicalDrive-Rangeline/WrongTurnIntoTraffic.mp4"
+    model = "qwen3-vl-plus"
 
     response_text = call_openai_for_video(prompt, video_path, model=model, timeout_s=180)
     out_path = f"anomaly_detection_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"

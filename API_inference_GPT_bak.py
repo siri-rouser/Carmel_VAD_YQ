@@ -73,7 +73,7 @@ def call_openai_for_video(video_path, severity, anomaly_cat, model="gpt-5-2025-0
     # Set a client timeout so calls can't hang forever
     client = OpenAI(api_key=api_key, timeout=timeout_s)
 
-    images = sample_frames_as_base64(video_path, max_frames=16, max_side=384, jpeg_q=80)
+    images = sample_frames_as_base64(video_path, max_frames=16, max_side=512, jpeg_q=80)
 
     prompt = """
     Please review the video and answer the three items below in English.
@@ -96,7 +96,7 @@ def call_openai_for_video(video_path, severity, anomaly_cat, model="gpt-5-2025-0
                     a. Anomaly relevance degree. Value in this case is $severity
                     b. Anomaly category. Value in this case is $anomaly_cat
 
-        # Task: Write a precise, factual, chronological description of the anomaly event using only what is observable in the frames and the given context. Be concise. You must include
+        # Task: Write a precise, factual, chronological description of the anomaly event using only what is observable in the frames and the given context. Traffic anomalies are observable violations of traffic rules or unsafe behaviors that create safety risk. Rely only on what is visible in the video. Name the road layout, the road users, the interaction, and why the behavior is risky. Be concise. You must include
 
             1. Road layout and surrounding environment. Example: an intersection with busy traffic, a snowy night roundabout, a straight road in an urban area
 
@@ -157,11 +157,11 @@ def call_openai_for_video(video_path, severity, anomaly_cat, model="gpt-5-2025-0
         # Output Format
             Return a single JSON object that follows this schema:
             {
-            "anomaly_relevance": "<critical or moderate or low>",
+            "anomaly_relevance": "<0-4, higher means more critical anomaly>",
             "anomaly_type_code": "<integer from the catalog>",
             "anomaly_type_label": "<label from the catalog>",
-            "event_description": "<chronological description. fewer than 100 words total with analysis>",
-            "event_analysis": "<brief reason this is anomalous. counted toward the same 100 word limit>"
+            "event_description": "<chronological description. fewer than 50 words>",
+            "event_analysis": "<brief reason this is anomalous. fewer than 50 words>"
             }
 
         # Examples

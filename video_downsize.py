@@ -6,7 +6,7 @@ def downsize_video(input_path, output_path):
     """Downsize a single video file."""
     cmd = [
         "ffmpeg", "-y", "-i", str(input_path),
-        "-vf", "scale=320:180:flags=lanczos",        # replace with the pad pipeline below to keep aspect
+        "-vf", "scale=1280:720:flags=lanczos",        # replace with the pad pipeline below to keep aspect
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
@@ -14,8 +14,8 @@ def downsize_video(input_path, output_path):
         str(output_path)
     ]
     # To preserve aspect ratio with padding instead, use:
-    # cmd[6] = "scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2:color=black"
-    
+    # cmd[6] = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black"
+
     try:
         subprocess.run(cmd, check=True)
         print(f"✓ Processed: {input_path.name} -> {output_path.name}")
