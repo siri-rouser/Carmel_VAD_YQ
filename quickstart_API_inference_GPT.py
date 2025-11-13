@@ -4,6 +4,10 @@ import numpy as np
 from PIL import Image
 from openai import OpenAI
 from openai import RateLimitError, APIStatusError, InternalServerError
+from utils.few_shot_example import FewShotExamples
+from utils.prompt_base import dev_instruction, assitant_instruction
+from string import Template
+import tiktoken
 
 # ---- helpers ----
 def parse_json_from_text(text: str) -> dict:
@@ -18,7 +22,6 @@ def parse_json_from_text(text: str) -> dict:
     if not m:
         raise ValueError("No JSON object found in response text.")
     return json.loads(m.group(0))
-
 
 def resize_keep_aspect(pil, max_side=512):
     w, h = pil.size
@@ -62,6 +65,122 @@ def build_messages(prompt, b64_images, instruction_text):
         user_content.append({"type": "input_image", "image_url": data_url})
     user = {"role": "user", "content": user_content}
     return [dev, user]
+
+def build_fewshot_messages(
+    instruction_text: str,
+    examples: list,
+    target_prompt: str,
+    target_images_b64: list
+):
+    """
+    Build a few-shot message list:
+      [ developer(instruction),
+        assistant(assistant-level instruction),
+        user(example#1 frames+prompt), assistant(example#1 ideal JSON),
+        ...,
+        user(target frames+prompt)
+      ]
+    Each example is a dict:
+      {
+        "prompt": "short example instruction to the model",
+        "video_images_b64": [data_url, ...],   # precomputed
+        "answer_json": {...}                   # ideal structured JSON (dict) or str
+      }
+    """
+    messages = [{
+        "role": "developer",
+        "content": instruction_text.strip()
+    }]
+
+    # --- NEW: global assistant message with extra guidance ---
+    assistant_text = assitant_instruction().strip()
+    if assistant_text:
+        messages.append({
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": assistant_text}]
+        })
+    # --------------------------------------------------------
+
+    # add exemplars
+    for ex in examples:
+        # user turn with frames + a terse prompt
+        user_content = [{"type": "input_text", "text": ex["prompt"]}]
+        for data_url in ex["video_images_b64"]:
+            user_content.append({"type": "input_image", "image_url": data_url})
+        messages.append({"role": "user", "content": user_content})
+
+        # assistant turn with the ideal gold JSON
+        if isinstance(ex["answer_json"], dict):
+            gold = json.dumps(ex["answer_json"], ensure_ascii=False)
+        else:
+            gold = str(ex["answer_json"]).strip()
+
+        messages.append({
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": gold}]
+        })
+
+    # final target query
+    final_user_content = [{"type": "input_text", "text": target_prompt}]
+    for data_url in target_images_b64:
+        final_user_content.append({"type": "input_image", "image_url": data_url})
+
+    messages.append({"role": "user", "content": final_user_content})
+    return messages
+
+def call_openai_for_video_fewshot(
+    target_prompt: str,
+    target_video_path: str,
+    examples: list, 
+    model="gpt-4.1-mini",
+    timeout_s=120,
+    target_max_frames=64,
+    target_max_side=384
+):
+    """
+    Build few-shot messages and call the Responses API.
+    The 'examples' list contains raw video paths and answer_json; we will sample frames here.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("Set OPENAI_API_KEY")
+
+    client = OpenAI(api_key=api_key, timeout=timeout_s)
+
+    # Sample frames for each example
+    processed_examples = []
+    for ex in examples:
+        processed_examples.append({
+            "prompt": ex.get("prompt", "Please analyze the video and output the JSON per schema."),
+            "video_images_b64": ex["video_images_b64"],
+            "answer_json": ex["answer_json"]
+        })
+
+    # Sample frames for target video
+    target_imgs = sample_frames_as_base64(
+        target_video_path,
+        max_frames=target_max_frames,
+        max_side=target_max_side,
+        jpeg_q=80
+    )
+
+    # Reuse your existing (great) instruction block
+    instruction = dev_instruction()
+
+    messages = build_fewshot_messages(
+        instruction_text=instruction,
+        examples=processed_examples,
+        target_prompt=target_prompt,
+        target_images_b64=target_imgs
+    )
+
+    result = client.responses.create(
+        model=model,
+        input=messages,
+        text={"verbosity": "low"},
+    )
+    return result.output_text
+
 
 def call_openai_for_video(prompt, video_path, model="gpt-4.1-mini", timeout_s=60):
     api_key = os.getenv("OPENAI_API_KEY")
@@ -222,23 +341,57 @@ def save_output_to_json(prompt, video_path, response, model_used, output_file):
     print(f"\nOutput saved to: {output_file}")
 
 if __name__ == "__main__":
-    prompt = """
-    Please review the video and answer the three items below in English.
+    
+    few_shot_example = FewShotExamples()
+    examples = few_shot_example.call_MononElmStreetNB_example()
+    
+    video_path = "./OTA/RangelineSMedicalDr/testdata/videos/RangelineSMedicalDr_av_258_18_3.mp4"
 
-        1. Identify the anomaly in the video
+    start_bbox = [
+                0.1328,
+                0.3005,
+                0.1536,
+                0.3338
+            ]
 
-        2. Provide a detailed description of the anomaly from start to end
+    end_bbox = [
+                0.8917,
+                0.4819,
+                0.9847,
+                0.5655
+            ]
+    
+    event_time = [6,27.248]
+    
+    cat = 18
+    severity = 3
+    video_length = 28.446
 
-        3. Provide a brief analysis that explains your basis for judging the behavior as an anomaly
-    """
-    video_path = "./carmel_data/MedicalDrive-Rangeline/WrongTurnIntoTraffic_downsize.mp4"
+    prompt_tmp = Template("""
+    Review the raw video and the Context. Follow the description and analysis style in examples, return one JSON object that matches the schema pre-defined. Use only what is visible in the frames and what is given in Context. Keep present tense. Use short sentences. No extra text outside JSON.
 
+    Context:                  
+        • Human labeled anomaly relevance is ${severity}.
+        • Human labeled anomaly type is ${cat}.
+        • Subject start box in frame is [${start_bbox}].
+        • Subject end box in frame is [${end_bbox}].
+        • Event start from ${event_start} seconds and end at ${event_end} seconds, video length is ${video_length} seconds.
+    """)
+
+    prompt = prompt_tmp.substitute(
+        severity=severity,
+        cat=cat,
+        video_length=video_length,
+        start_bbox=", ".join([f"{x:.4f}" for x in start_bbox]),
+        end_bbox=", ".join([f"{x:.4f}" for x in end_bbox]),
+        event_start=event_time[0],
+        event_end=event_time[1]
+    )
+                      
     # Pick a model you’re entitled to; try this first:
-    # model = "gpt-4.1-mini"
-    # If you have access, you can use:
     model = "gpt-5-2025-08-07"
 
-    response_text = call_openai_for_video(prompt, video_path, model=model, timeout_s=180)
+    response_text = call_openai_for_video_fewshot(prompt, video_path, examples=examples, model=model, timeout_s=180)
     out_path = f"anomaly_detection_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     print("Response from model:")
     print(response_text)

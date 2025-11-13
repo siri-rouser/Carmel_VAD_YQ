@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 import re
-from QA_pair_database import QA_pair_database
+from utils.QA_pair_database import QA_pair_database
 
 logging.basicConfig(level=logging.INFO)
 
