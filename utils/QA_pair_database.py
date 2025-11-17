@@ -75,3 +75,43 @@ class QA_pair_database:
             return "category"
         else:
             return "unknown"
+
+    def category_to_index(self, category_name: str) -> str:
+        categories = {
+            "change of lane": "1",
+            "late turn": "2",
+            "cutting inside turns": "3",
+            "driving on the centerline": "4",
+            "yielding to emergency vehicles": "5",
+            "brief wait at an open intersection": "6",
+            "long wait at an empty intersection": "7",
+            "too far onto the main road while waiting": "8",
+            "stopping at an unusual point": "9",
+            "slowing at an unusual point": "10",
+            "fast driving that appears reckless": "11",
+            "slow driving with apparent uncertainty": "12",
+            "unusual movement pattern": "13",
+            "brief reverse movement": "14",
+            "unusual approach toward waiting or slow cars": "15",
+            "traffic tie up": "16",
+            "almost cut another traffic agent off": "17",
+            "cut another traffic agent off clearly": "18",
+            "almost collision": "19",
+            "into oncoming lane while turning": "20",
+            "illegal turn": "21",
+            "short wrong way in roundabout then exit": "22",
+            "wrong way driver": "23",
+            "more than one full turn in a roundabout": "24",
+            "broken down vehicle on street": "25",
+            "stop mid street to let a person cross": "26",
+            "stop at a crosswalk to let a person cross": "27",
+            "slight departure from the roadway": "28",
+            "on or parking on sidewalk": "29",
+            "strong sudden braking": "30",
+            "swerve to avoid or maneuver around a vehicle": "31",
+            "risky behaviour that does not fit another category": "32",
+        }
+
+        # Normalize input for case and whitespace
+        category_name = category_name.strip().lower()
+        return categories.get(category_name, None)

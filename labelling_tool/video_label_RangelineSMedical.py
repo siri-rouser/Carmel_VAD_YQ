@@ -172,10 +172,11 @@ def process_folder(folder_path):
         • Subject start box in frame is [${start_bbox}].
         • Subject end box in frame is [${end_bbox}].
         • Event start from ${event_start} seconds and end at ${event_end} seconds, video length is ${video_length} seconds.
+        • The road layout is a double-lane roundabout.
     """)
 
     few_shot_example = FewShotExamples()
-    examples = few_shot_example.call_MononElmStreetNB_example()
+    examples = few_shot_example.call_RangelineSMedicalDr_example()
 
     count = 0
     folder_path = Path(folder_path)
@@ -188,8 +189,10 @@ def process_folder(folder_path):
                 prompt, video_length = make_prompt(file_path, prompt_tmp)
                 if prompt is None:
                     continue
+                if video_length > 60:
+                    continue
 
-                target_max_frames = min(int(video_length * 3), 64)
+                target_max_frames = min(int(video_length * 3), 96)
                 text_response = call_openai_for_video_fewshot(prompt, file_path, examples=examples, model=model, target_max_frames=target_max_frames, timeout_s=180)
 
                 parsed = parse_json_from_text(text_response)
@@ -208,7 +211,7 @@ def process_folder(folder_path):
                 print(f"[{count}] Processed {file_path.name}, generated {len(samples)} samples.")
 
 if __name__ == "__main__":
-    folders = ["./OTA/MononElmStreetNB/testdata_selected/videos"]
+    folders = ["./OTA/RangelineSMedicalDr/testdata_selected/videos"]
 
     for folder in folders:
         if os.path.exists(folder):

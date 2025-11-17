@@ -70,16 +70,16 @@ def main():
         "inputs",
         nargs="*",
         default=[
-            "./OTA/MononElmStreetNB/testdata/gpt_inference_results.json",
-            "./OTA/RangelineSMedicalDr/testdata/gpt_inference_results.json",
-            "./OTA/RangelineS116thSt/testdata/gpt_inference_results.json",
+            "./OTA/MononElmStreetNB/testdata_selected/processed_gpt_inference_results.json",
+            "./OTA/RangelineSMedicalDr/testdata_selected/processed_gpt_inference_results.json",
+            "./OTA/RangelineS116thSt/testdata_selected/processed_gpt_inference_results.json",
         ],
         help="Input files (JSON or JSONL). Defaults to your three paths."
     )
     parser.add_argument(
         "-o", "--output",
-        default="combined_gpt_inference_results.json",
-        help="Output file path. Defaults to combined_gpt_inference_results.json"
+        default="combined_processed_gpt_inference_results_testset.json",
+        help="Output file path. Defaults to combined_processed_gpt_inference_results.json"
     )
     parser.add_argument(
         "--jsonl",

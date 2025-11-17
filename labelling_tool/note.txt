@@ -1,3 +1,9 @@
+Potential steps for post process:
+1. cat_converter.py to convert 32 cat to 4 cat
+2. filter_serverity.py to filter out severity related questions
+3. combine_jsonfile.py to combine three scene.
+4. scp to server
+
 Mark some very challenging and trival one（11，12，18，21）:
 RangelineS116thSt_av_2_21_3.mp4
 RangelineS116thSt_av_4_18_3.mp4
