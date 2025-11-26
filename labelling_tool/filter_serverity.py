@@ -33,7 +33,7 @@ def process_file(file_path):
 
 
 if __name__ == "__main__":
-    # json_files = ["./OTA/MononElmStreetNB/testdata_selected/gpt_inference_results_4cat.json", "./OTA/RangelineS116thSt/testdata_selected/gpt_inference_results_4cat.json", "./OTA/RangelineSMedicalDr/testdata_selected/gpt_inference_results_4cat.json"]
-    json_files = ["./carmel_data/MedicalDrive-Rangeline-midres/gpt_inference_results_4cat.json","./carmel_data/RangelineCityCenterSB-midres/gpt_inference_results_4cat.json"]
+    json_files = ["./OTA/RangelineS116thSt/testdata_selected/gpt_inference_results_4cat.json", "./OTA/RangelineSMedicalDr/testdata_selected/gpt_inference_results_4cat.json","./OTA/MononElmStreetNB/testdata_selected/gpt_inference_results_4cat.json"]
+    # json_files = ["./carmel_data/MedicalDrive-Rangeline-midres/gpt_inference_results_4cat.json","./carmel_data/RangelineCityCenterSB-midres/gpt_inference_results_4cat.json"]
     for file_path in json_files:
         process_file(file_path)

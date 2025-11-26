@@ -53,6 +53,27 @@ class QA_pair_database:
             "How would you define the category of the anomaly present in this video?",
         ]
 
+        self.category_database_new = [
+            "Does this video contain any anomalies? If yes, what type(s) of anomaly are present?",
+            "Identify whether there are anomalies in this video. If there are, assign each anomaly to an appropriate category.",
+            "Determine if the video shows any anomalies. If it does, indicate the category of each anomaly.",
+            "Check the video for anomalies. If any are present, describe them and specify their categories.",
+            "Examine the video and determine whether it contains anomalies. If so, list the anomalies and their categories.",
+            "Analyze the video for potential anomalies. If anomalies are found, provide the category for each.",
+            "Assess whether the video includes any anomalous events. If it does, classify each event into a category.",
+            "Inspect the video for anomalies. If any are detected, state their categories.",
+            "Determine if the video segment contains anomalous behavior or events. If so, categorize each one.",
+            "Review the video to identify anomalies. If anomalies are present, report them along with their categories.",
+        ]
+        self.four_category_context = """
+        #   You are a classification system for identifying anomalous driving behaviors.  
+            There are **4 predefined anomaly categories** listed below.  
+            1: "speed_trajectory_irregularities": Abnormal speed choice or unstable movement patterns that raise risk (or clearly deviate from “normal” driving), even if they don’t directly create a near-collision event.
+            2: "direction_space_violations": The main problem is where the car is relative to legal lanes/roadway/sidewalk, including wrong-way, illegal turns, and using space not meant for vehicles.
+            3: "conflict_near_collision": Events where interaction with another road user becomes critical: one vehicle clearly cuts off another, a near crash occurs, or emergency maneuvers (hard braking, swerving) are taken to avoid collision.
+            4: "stopped_obstruction_right_of_way": Vehicles that are stopped or nearly stopped in the roadway for special reasons—emergency vehicles, breakdowns, letting pedestrians cross—or that act as an obstruction.
+        """
+
     def question_selection(self,type):
         if type == "description":
             return random.choice(self.description_database)
@@ -62,6 +83,10 @@ class QA_pair_database:
             return random.choice(self.severity_database)
         elif type == "category":
             return random.choice(self.category_database)
+        elif type == "category_new":
+            return random.choice(self.category_database_new)
+        else:
+            raise ValueError(f"Unknown question type: {type}")
 
     def question_type_query(self, question: str) -> str:
         """Return which question type the input belongs to."""
@@ -73,6 +98,8 @@ class QA_pair_database:
             return "severity"
         elif question in self.category_database:
             return "category"
+        elif question in self.category_database_new:
+            return "category_new"
         else:
             return "unknown"
 
@@ -83,6 +110,7 @@ class QA_pair_database:
             "cutting inside turns": "3",
             "driving on the centerline": "4",
             "yielding to emergency vehicles": "5",
+            "waiting or moving out of the way for emergency vehicles": "5",
             "brief wait at an open intersection": "6",
             "long wait at an empty intersection": "7",
             "too far onto the main road while waiting": "8",
@@ -99,6 +127,10 @@ class QA_pair_database:
             "almost collision": "19",
             "into oncoming lane while turning": "20",
             "illegal turn": "21",
+            "illegal U-turn inside roundabout": "21",
+            "illegal turn (include illegal U-turns and illegal/improper lane changes inside roundabout)": "21",
+            "illegal turn (include illegal U-turns and illegal/improper lane changes inside roundabout)": "21",
+            "improper lane use/erratic path in roundabout": "21",
             "short wrong way in roundabout then exit": "22",
             "wrong way driver": "23",
             "more than one full turn in a roundabout": "24",
@@ -106,12 +138,24 @@ class QA_pair_database:
             "stop mid street to let a person cross": "26",
             "stop at a crosswalk to let a person cross": "27",
             "slight departure from the roadway": "28",
+            "slightly getting off the road while driving": "28",
             "on or parking on sidewalk": "29",
+            "car getting on / standing on / parking on sidewalk": "29",
             "strong sudden braking": "30",
             "swerve to avoid or maneuver around a vehicle": "31",
             "risky behaviour that does not fit another category": "32",
         }
 
-        # Normalize input for case and whitespace
-        category_name = category_name.strip().lower()
-        return categories.get(category_name, None)
+        if category_name not in categories:
+            print("DEBUG category_name repr:", repr(category_name))
+            # Optionally compare to the problematic key:
+            key = "illegal turn (include illegal U-turns and illegal/improper lane changes inside roundabout)"
+            print("DEBUG key repr       :", repr(key))
+            print("DEBUG same length?   :", len(category_name), len(key))
+            print("DEBUG char diffs:")
+            for i, (a, b) in enumerate(zip(category_name, key)):
+                if a != b:
+                    print(f"  pos {i}: {repr(a)} vs {repr(b)}")
+            if len(category_name) != len(key):
+                print("  extra chars in one of them")
+        return categories.get(category_name)

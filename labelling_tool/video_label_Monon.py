@@ -5,7 +5,7 @@ import json
 from typing import Dict, Any, Optional, List
 
 from click import prompt
-from quickstart_API_inference_GPT import call_openai_for_video_fewshot
+from playground.quickstart_API_inference_GPT import call_openai_for_video_fewshot
 from utils.QA_pair_database import QA_pair_database
 from string import Template
 from utils.few_shot_example import FewShotExamples
@@ -73,7 +73,7 @@ def make_qwen_samples_for_video(
                 {"from": "human", "value": f"<video>\n{description_question}"},
                 {"from": "gpt", "value": anomaly_desc}
             ],
-            "video": video_path.as_posix()
+            "video": video_path.as_posix() if isinstance(video_path, Path) else video_path
         })
 
     # --- Q2: severity ---
@@ -84,18 +84,18 @@ def make_qwen_samples_for_video(
                 {"from": "human", "value": f"<video>\n{severity_question}"},
                 {"from": "gpt", "value": severity}
             ],
-            "video": video_path.as_posix()
+            "video": video_path.as_posix() if isinstance(video_path, Path) else video_path
         })
 
     # --- Q3: category ---
     if type_label:
-        category = QA_base.question_selection("category")
+        category = QA_base.question_selection("category_new")
         samples.append({
             "conversations": [
                 {"from": "human", "value": f"<video>\n{category}"},
                 {"from": "gpt", "value": type_label}
             ],
-            "video": video_path.as_posix()
+            "video": video_path.as_posix() if isinstance(video_path, Path) else video_path
         })
 
     # --- Q4: cause / basis ---
@@ -106,7 +106,7 @@ def make_qwen_samples_for_video(
                 {"from": "human", "value": f"<video>\n{analysis_question}"},
                 {"from": "gpt", "value": analysis}
             ],
-            "video": video_path.as_posix()
+            "video": video_path.as_posix() if isinstance(video_path, Path) else video_path
         })
 
     # If model said "no anomaly", you might get none of the above fields—emit a fallback minimal sample:

@@ -78,7 +78,7 @@ def main():
     )
     parser.add_argument(
         "-o", "--output",
-        default="combined_processed_gpt_inference_results_testset.json",
+        default="combined_processed_gpt_inference_results.json",
         help="Output file path. Defaults to combined_processed_gpt_inference_results.json"
     )
     parser.add_argument(

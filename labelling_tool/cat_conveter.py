@@ -1,6 +1,10 @@
 from pathlib import Path
 import json
+import logging
 from utils.QA_pair_database import QA_pair_database
+
+LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.DEBUG)
 
 FINE_TO_MACRO_ID = {
     # 1) speed_trajectory_irregularities
@@ -58,10 +62,13 @@ QA_pair_database = QA_pair_database()
 def cat_conv(item):
     question = item["conversations"][0]["value"].split("\n")[1]
     gpt_answer = item["conversations"][1]["value"]
-    question_type = QA_pair_database.question_type_query(question)
 
-    if question_type == "category":
+    if QA_pair_database.question_type_query(question) == "category_new":
         cat_no = QA_pair_database.category_to_index(gpt_answer)
+        if cat_no is None:
+            LOG.warning(f"Unrecognized category answer: <{gpt_answer}>")
+            return item
+        
         macro_id, macro_name = map_32_to_4(cat_no)
 
         if macro_id is not None:
@@ -79,10 +86,9 @@ def process_file(file_path):
 
             f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-
 if __name__ == "__main__":
-    # json_files = ["./OTA/RangelineS116thSt/testdata_selected/gpt_inference_results.json","./OTA/MononElmStreetNB/testdata_selected/gpt_inference_results.json", "./OTA/RangelineSMedicalDr/testdata_selected/gpt_inference_results.json"]
-    json_files = ["./carmel_data/MedicalDrive-Rangeline-midres/gpt_inference_results.json","./carmel_data/RangelineCityCenterSB-midres/gpt_inference_results.json"]
+    json_files = ["./OTA/RangelineS116thSt/testdata_selected/gpt_inference_results.json","./OTA/MononElmStreetNB/testdata_selected/gpt_inference_results.json", "./OTA/RangelineSMedicalDr/testdata_selected/gpt_inference_results.json"]
+    # json_files = ["./carmel_data/MedicalDrive-Rangeline-midres/gpt_inference_results.json","./carmel_data/RangelineCityCenterSB-midres/gpt_inference_results.json"]
     for file_path in json_files:
         process_file(file_path)
         print(f"Processed file: {file_path}")
